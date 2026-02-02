@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Sentinel outputs
+runs/
+*.jsonl
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 模型权重和 checkpoint（体积大，不适合放 GitHub）
+sentinel/models/
+
+# 本地运行产物
+test_run/
+examples/
+runs/
+tests/input_task_type/
+
+# 敏感或本地配置（若有）
+.env
+*.env
+script/set_environment.sh
+
+
+# 其他
+ARCHITECTURE.md
+README.md

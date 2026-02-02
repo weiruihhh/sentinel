@@ -1,0 +1,224 @@
+"""
+Core data structures for Sentinel system.
+
+All inputs/outputs use structured Pydantic models for type safety and validation.
+"""
+
+from datetime import datetime
+from enum import Enum
+from typing import Any, Literal, Optional
+
+from pydantic import BaseModel, Field
+
+
+class RiskLevel(str, Enum):
+    """Risk level for tools and actions."""
+
+    READ_ONLY = "read_only"
+    SAFE_WRITE = "safe_write"
+    RISKY_WRITE = "risky_write"
+
+
+class PermissionLevel(str, Enum):
+    """Permission level for tool access control.
+    不同权限级别的工具访问控制。
+    GUEST: 访客，只能查看信息。
+    OPERATOR: 操作员，可以执行操作。
+    ADMIN: 管理员，可以执行所有操作。
+    """
+
+    GUEST = "guest"
+    OPERATOR = "operator"
+    ADMIN = "admin"
+
+
+class Budget(BaseModel):
+    """Resource budget for task execution."""
+
+    max_tokens: int = Field(default=100000, description="Maximum LLM tokens")
+    max_time_seconds: int = Field(default=300, description="Maximum execution time in seconds")
+    max_tool_calls: int = Field(default=50, description="Maximum tool invocations")
+
+    tokens_used: int = Field(default=0, description="Tokens consumed so far")
+    time_used: float = Field(default=0.0, description="Time consumed so far")
+    tool_calls_used: int = Field(default=0, description="Tool calls consumed so far")
+
+    def is_exceeded(self) -> bool:
+        """检查token、时间、工具调用是否超出预算"""
+        return (
+            self.tokens_used > self.max_tokens
+            or self.time_used > self.max_time_seconds
+            or self.tool_calls_used > self.max_tool_calls
+        )
+
+    def record_token_usage(self, tokens: int) -> None:
+        """Record token usage."""
+        self.tokens_used += tokens
+
+    def record_time_usage(self, seconds: float) -> None:
+        """Record time usage."""
+        self.time_used += seconds
+
+    def record_tool_call(self) -> None:
+        """Record a tool call."""
+        self.tool_calls_used += 1
+
+
+class Task(BaseModel):
+    """
+    Unified task representation for all inputs (alerts, tickets, questions, cron jobs).
+    """
+
+    task_id: str = Field(..., description="Unique task identifier")
+    created_at: datetime = Field(default_factory=datetime.now, description="Task creation time")
+    source: Literal["alert", "ticket", "chat", "cron"] = Field(..., description="Task source type")
+
+    symptoms: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Symptoms: alert name, metric summary, log snippets, etc.",
+    )
+    context: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Context: topology, recent changes, SLO, owner, etc.",
+    )
+    constraints: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Constraints: read_only, no_restart, etc.",
+    )
+
+    risk_level: Optional[RiskLevel] = Field(None, description="Risk level (set by triage agent)")
+    goal: str = Field(..., description="Task goal/objective")
+    budget: Budget = Field(default_factory=Budget, description="Resource budget")
+
+    # Runtime metadata
+    assigned_agents: list[str] = Field(default_factory=list, description="Agents assigned to this task")
+    status: str = Field(default="pending", description="Task status")
+
+    class Config:
+        json_encoders = {datetime: lambda v: v.isoformat()}
+
+
+class Evidence(BaseModel):
+    """
+    Evidence collected during investigation phase.
+    """
+
+    source: str = Field(..., description="Evidence source (tool name, doc, human)")
+    timestamp: datetime = Field(default_factory=datetime.now, description="Collection timestamp")
+    data: dict[str, Any] = Field(..., description="Evidence data")
+    confidence: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Confidence score (0.0-1.0)"
+    )
+    notes: str = Field(default="", description="Additional notes or interpretation")
+
+    class Config:
+        json_encoders = {datetime: lambda v: v.isoformat()}
+
+
+class Action(BaseModel):
+    """
+    Planned or executed action.
+    """
+
+    tool_name: str = Field(..., description="Tool to invoke")
+    args: dict[str, Any] = Field(default_factory=dict, description="Tool arguments")
+    risk_level: RiskLevel = Field(..., description="Risk level of this action")
+    requires_approval: bool = Field(default=False, description="Whether approval is needed")
+    dry_run: bool = Field(default=False, description="Dry-run mode (no actual changes)")
+
+    # Execution metadata (filled after execution)
+    executed: bool = Field(default=False, description="Whether action was executed")
+    execution_time: Optional[datetime] = Field(None, description="Execution timestamp")
+    result: Optional[dict[str, Any]] = Field(None, description="Execution result")
+    error: Optional[str] = Field(None, description="Error message if failed")
+
+    class Config:
+        json_encoders = {datetime: lambda v: v.isoformat()}
+
+
+class Plan(BaseModel):
+    """
+    Execution plan generated by planner agent.
+    """
+
+    hypotheses: list[str] = Field(
+        default_factory=list, description="Root cause hypotheses"
+    )
+    actions: list[Action] = Field(default_factory=list, description="Planned actions")
+    expected_effect: str = Field(default="", description="Expected outcome")
+    risks: list[str] = Field(default_factory=list, description="Identified risks")
+    rollback_plan: list[Action] = Field(
+        default_factory=list, description="Rollback actions (reserved for M2)"
+    )
+    approval_required: bool = Field(
+        default=False, description="Whether plan requires approval"
+    )
+
+    # Plan metadata
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0, description="Plan confidence")
+    estimated_duration_seconds: int = Field(default=60, description="Estimated execution time")
+
+
+class Report(BaseModel):
+    """
+    Final report generated after task execution.
+    """
+
+    task_id: str = Field(..., description="Associated task ID")
+    generated_at: datetime = Field(
+        default_factory=datetime.now, description="Report generation time"
+    )
+
+    summary: str = Field(..., description="Executive summary")
+    root_cause_hypotheses: list[str] = Field(
+        default_factory=list, description="Root cause analysis"
+    )
+    recommended_actions: list[str] = Field(
+        default_factory=list, description="Recommended actions"
+    )
+
+    evidence: list[Evidence] = Field(default_factory=list, description="Supporting evidence")
+    plan: Optional[Plan] = Field(None, description="Generated plan (if any)")
+
+    # Metrics
+    metrics: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Metrics: tokens used, time spent, tool calls, etc.",
+    )
+
+    # Status
+    status: Literal["success", "partial", "failed"] = Field(
+        default="success", description="Overall status"
+    )
+    errors: list[str] = Field(default_factory=list, description="Errors encountered")
+
+    class Config:
+        json_encoders = {datetime: lambda v: v.isoformat()}
+
+
+# Additional helper types
+
+class ToolResult(BaseModel):
+    """Result from tool execution."""
+
+    success: bool = Field(..., description="Whether tool execution succeeded")
+    data: dict[str, Any] = Field(default_factory=dict, description="Result data")
+    error: Optional[str] = Field(None, description="Error message if failed")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Metadata: duration, tokens, etc."
+    )
+
+
+class LLMMessage(BaseModel):
+    """Message for LLM interaction."""
+
+    role: Literal["system", "user", "assistant"] = Field(..., description="Message role")#"..."表示必填
+    content: str = Field(..., description="Message content")
+
+
+class LLMResponse(BaseModel):
+    """Response from LLM."""
+
+    content: str = Field(..., description="Generated content")
+    tokens_used: int = Field(default=0, description="Tokens consumed")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
