@@ -11,10 +11,12 @@ from sentinel.agents.executor import ExecutorAgent, ExecutorInput
 from sentinel.agents.investigation import InvestigationAgent, InvestigationInput
 from sentinel.agents.planner import PlannerAgent, PlannerInput
 from sentinel.agents.triage import TriageAgent, TriageInput
+from sentinel.config import SentinelConfig
 from sentinel.llm.base import LLMClient
 from sentinel.observability.tracer import TraceRecorder
 from sentinel.orchestration.graph import ExecutionContext, Graph
 from sentinel.orchestration.policies import ApprovalPolicy, BudgetPolicy, RetryPolicy
+from sentinel.orchestration.verifier import Verifier
 from sentinel.tools.registry import ToolRegistry
 from sentinel.types import Evidence, PermissionLevel, Plan, Report, Task
 
@@ -29,7 +31,7 @@ class Orchestrator:
     4. PLAN: 生成执行计划
     5. APPROVE: 检查计划是否需要批准 (M1: 自动批准)
     6. EXECUTE: 执行计划 (M1: 仅模拟执行)
-    7. VERIFY: 验证结果 (M1: 模拟验证)
+    7. VERIFY: 验证结果 (M1: 模拟验证/M2: 真实验证)
     8. REPORT: 生成最终报告
     """
 
@@ -38,32 +40,42 @@ class Orchestrator:
         llm_client: LLMClient,
         tool_registry: ToolRegistry,
         tracer: TraceRecorder,
+        config: SentinelConfig,
         budget_policy: Optional[BudgetPolicy] = None,
         retry_policy: Optional[RetryPolicy] = None,
         approval_policy: Optional[ApprovalPolicy] = None,
         caller_permission: PermissionLevel = PermissionLevel.OPERATOR,
     ):
         """
-        Initialize orchestrator.
+        初始化协调器。
 
         Args:
-            llm_client: LLM client for agents
-            tool_registry: Tool registry
-            tracer: Trace recorder for observability
-            budget_policy: Budget policy (optional)
-            retry_policy: Retry policy (optional)
-            approval_policy: Approval policy (optional)
-            caller_permission: Default permission level
+            llm_client: LLM 客户端，用于代理
+            tool_registry: 工具注册表，用于查询指标和日志
+            tracer: 追踪器，用于记录追踪信息
+            config: Sentinel 配置
+            budget_policy: 预算策略 (可选)
+            retry_policy: 重试策略 (可选)
+            approval_policy: 批准策略 (可选)
+            caller_permission: 默认权限级别
         """
         self.llm_client = llm_client
         self.tool_registry = tool_registry
         self.tracer = tracer
+        self.config = config
         self.caller_permission = caller_permission
 
         # Policies
         self.budget_policy = budget_policy or BudgetPolicy()
         self.retry_policy = retry_policy or RetryPolicy()
         self.approval_policy = approval_policy or ApprovalPolicy()
+
+        # Initialize verifier
+        self.verifier = Verifier(
+            tool_registry=tool_registry,
+            config=config,
+            use_real_verification=config.orchestration.use_real_verification,
+        )
 
         # Initialize agents
         self.triage_agent = TriageAgent(llm_client, tool_registry)
@@ -384,30 +396,56 @@ class Orchestrator:
             raise
 
     def _node_verify(self, context: ExecutionContext) -> dict[str, Any]:
-        """Verify node: verify outcome (M1: mock verification)."""
+        """验证节点：使用真实指标/日志或模拟验证结果。目前已经改成真实"""
         span_id = self.tracer.start_span(
             component="orchestrator",
             name="verify",
             parent_span_id=None,
         )
 
-        # M1: Mock verification (in M2, check actual metrics/alerts)
-        # For demo, assume verification passes
-        verification_result = {
-            "verified": True,
-            "status": "improved",
-            "notes": "Mock verification: symptoms appear to be resolved (M1 simulation)",
-        }
+        try:
+            task = context.state["task"]
 
-        context.state["verification"] = verification_result
+            # 使用验证器检查问题是否已解决
+            verification_result = self.verifier.verify(task, context.state)
 
-        self.tracer.end_span(
-            span_id,
-            status="success",
-            metadata=verification_result,
-        )
+            # 转换为字典用于存储
+            verification_dict = {
+                "verified": verification_result.verified,
+                "status": verification_result.status,
+                "checks": verification_result.checks,
+                "notes": verification_result.notes,
+            }
 
-        return verification_result
+            # 存储验证结果
+            context.state["verification"] = verification_dict
+
+            self.tracer.end_span(
+                span_id,
+                status="success",
+                metadata=verification_dict,
+            )
+
+            return verification_dict
+
+        # 处理异常
+        except Exception as e:
+            error_result = {
+                "verified": False,
+                "status": "error",
+                "checks": [],
+                "notes": f"Verification failed with error: {str(e)}",
+            }
+            context.state["verification"] = error_result
+
+            self.tracer.end_span(
+                span_id,
+                status="failed",
+                error=str(e),
+                metadata=error_result,
+            )
+
+            return error_result
 
     def _node_report(self, context: ExecutionContext) -> Report:
         """Report node: generate final report."""

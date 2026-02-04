@@ -20,6 +20,7 @@ from sentinel.observability.tracer import TraceRecorder
 from sentinel.orchestration.orchestrator import Orchestrator
 from sentinel.orchestration.policies import ApprovalPolicy, BudgetPolicy, RetryPolicy
 from sentinel.tools.mock_tools import register_mock_tools
+from sentinel.tools.real_tools import register_real_tools
 from sentinel.tools.registry import ToolRegistry
 from sentinel.types import Budget, PermissionLevel, Task
 
@@ -135,6 +136,31 @@ def main():
         type=str,
         help="Output directory (default: ./runs/YYYYMMDD_HHMMSS)",
     )
+    parser.add_argument(
+        "--use-real-tools",
+        action="store_true",
+        help="Use real data sources (Prometheus, Loki, CMDB, etc.) instead of mock data",
+    )
+    parser.add_argument(
+        "--prometheus-url",
+        type=str,
+        help="Prometheus server URL (default: http://localhost:9091)",
+    )
+    parser.add_argument(
+        "--loki-url",
+        type=str,
+        help="Loki server URL (default: http://localhost:3100)",
+    )
+    parser.add_argument(
+        "--cmdb-url",
+        type=str,
+        help="CMDB API URL",
+    )
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Execute write operations (scale, restart, etc.). Default is dry_run mode.",
+    )
 
     args = parser.parse_args()
 
@@ -181,14 +207,37 @@ def main():
     # Initialize components
     config = get_config()
 
+    # Override data source config from command line args
+    if args.use_real_tools:
+        config.data_sources.use_real_tools = True
+        # Enable real verification when using real tools
+        config.orchestration.use_real_verification = True
+    if args.prometheus_url:
+        config.data_sources.prometheus_url = args.prometheus_url
+    if args.loki_url:
+        config.data_sources.loki_url = args.loki_url
+    if args.cmdb_url:
+        config.data_sources.cmdb_url = args.cmdb_url
+    if args.execute:
+        config.data_sources.execute_write_operations = True
+
     # LLM client: mock or real API/local from config (see config.llm.provider, api_base, api_key)
     llm_client = get_llm_client(config.llm)
     print(f"🤖 LLM: {llm_client}")
 
     # Tool registry
     tool_registry = ToolRegistry()
-    register_mock_tools(tool_registry)
-    print(f"🔧 Tools registered: {len(tool_registry.list_tools())}")
+    if config.data_sources.use_real_tools:
+        register_real_tools(tool_registry, config.data_sources)
+        print(f"🔧 Tools registered: {len(tool_registry.list_tools())} (REAL data sources)")
+        if config.data_sources.execute_write_operations:
+            print(f"⚠️  Write operations: EXECUTE mode (will perform actual changes)")
+        else:
+            print(f"🔒 Write operations: DRY RUN mode (use --execute to perform actual changes)")
+    else:
+        register_mock_tools(tool_registry)
+        print(f"🔧 Tools registered: {len(tool_registry.list_tools())} (MOCK data)")
+
 
     # Tracer
     tracer = TraceRecorder(output_dir=output_dir)
@@ -214,12 +263,17 @@ def main():
         llm_client=llm_client,
         tool_registry=tool_registry,
         tracer=tracer,
+        config=config,
         budget_policy=budget_policy,
         retry_policy=retry_policy,
         approval_policy=approval_policy,
         caller_permission=PermissionLevel.OPERATOR,
     )
     print(f"🎭 Orchestrator ready")
+    if config.orchestration.use_real_verification:
+        print(f"✅ Real verification enabled")
+    else:
+        print(f"⚠️  Mock verification (use --use-real-tools for real verification)")
     print()
 
     # Run workflow

@@ -59,6 +59,60 @@ class OrchestrationConfig(BaseModel):
         default=False, description="Auto-approve safe write actions"
     )
 
+    # Verification
+    use_real_verification: bool = Field(
+        default=False, description="Use real metrics/logs for verification instead of mock"
+    )
+    verification_window_minutes: int = Field(
+        default=5, description="Time window for verification checks (minutes)"
+    )
+    verification_error_threshold: int = Field(
+        default=5, description="Max acceptable error count in verification window"
+    )
+
+
+class DataSourcesConfig(BaseModel):
+    """Data sources configuration for real tools."""
+
+    # Tool mode
+    use_real_tools: bool = Field(
+        default=False, description="Use real data sources instead of mock"
+    )
+
+    # Write operations control
+    execute_write_operations: bool = Field(
+        default=False, description="Execute write operations (scale, restart, etc.). Default is dry_run mode."
+    )
+
+    # Prometheus
+    prometheus_url: str = Field(
+        default="http://localhost:9091", description="Prometheus server URL"
+    )
+    prometheus_timeout: int = Field(default=30, description="Prometheus query timeout")
+
+    # Loki (logs)
+    loki_url: str = Field(default="http://localhost:3100", description="Loki server URL")
+    loki_timeout: int = Field(default=30, description="Loki query timeout")
+
+    # Elasticsearch (alternative for logs)
+    elasticsearch_url: str = Field(default="", description="Elasticsearch URL (optional)")
+    elasticsearch_index: str = Field(default="logs-*", description="Elasticsearch index pattern")
+    elasticsearch_timeout: int = Field(default=30, description="Elasticsearch query timeout")
+
+    # CMDB / Topology
+    cmdb_url: str = Field(default="", description="CMDB API URL")
+    cmdb_api_key: str = Field(default="", description="CMDB API key")
+    cmdb_timeout: int = Field(default=30, description="CMDB query timeout")
+
+    # Change history (Git/CD)
+    git_repo_path: str = Field(default="", description="Git repository path for change history")
+    cd_api_url: str = Field(default="", description="CD system API URL (e.g., ArgoCD, Jenkins)")
+    cd_api_key: str = Field(default="", description="CD system API key")
+
+    # Docker Compose (for write operations)
+    docker_compose_file: str = Field(default="./monitoring/docker-compose.yml", description="Path to docker-compose.yml file")
+    docker_compose_project: str = Field(default="monitoring", description="Docker Compose project name")
+
 
 class SentinelConfig(BaseModel):
     """Global Sentinel configuration."""
@@ -67,6 +121,7 @@ class SentinelConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     orchestration: OrchestrationConfig = Field(default_factory=OrchestrationConfig)
+    data_sources: DataSourcesConfig = Field(default_factory=DataSourcesConfig)
 
     # System
     default_permission_level: str = Field(
