@@ -1,0 +1,119 @@
+version: "3.8"
+
+services:
+  # Prometheus - 指标收集
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: sentinel-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    networks:
+      - monitoring
+
+  # Loki - 日志聚合
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: sentinel-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yml:/etc/loki/local-config.yaml
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - monitoring
+
+  # Promtail - 日志采集器
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: sentinel-promtail
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml
+      - /var/log:/var/log
+      - ./logs:/logs # 示例应用日志目录
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - monitoring
+    depends_on:
+      - loki
+
+  # Grafana - 可视化（可选）
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sentinel-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+      - loki
+
+  # 示例应用 1: auth-service,就是在demo-app目录下，使用Dockerfile构建的镜像,简单测试一下前面的监控服务是否有效。
+  # 不设置 container_name、不映射主机端口，以便支持 docker-compose scale；多副本时从宿主机访问请用: docker compose exec auth-service curl -s http://localhost:8080/ 或只开 1 副本时临时加 ports
+  auth-service:
+    build:
+      context: ./demo-app
+      dockerfile: Dockerfile
+    expose:
+      - "8080"
+    environment:
+      - SERVICE_NAME=auth-service
+      - REDIS_HOST=redis-cache
+      - REDIS_PORT=6379
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - monitoring
+    depends_on:
+      - redis-cache
+
+  # 示例应用 2: redis-cache
+  redis-cache:
+    image: redis:7-alpine
+    container_name: redis-cache
+    ports:
+      - "6380:6379" # 主机 6380 → 容器 6379，避免与宿主机已有 Redis(6379) 冲突
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - monitoring
+
+  # Redis Exporter - 导出 Redis 指标到 Prometheus
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis-cache:6379
+    networks:
+      - monitoring
+    depends_on:
+      - redis-cache
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  loki-data:
+  grafana-data:
+  redis-data:
