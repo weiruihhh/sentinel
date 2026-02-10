@@ -15,7 +15,9 @@ __all__ = ["LLMClient", "MockLLM", "OpenAICompatLLM", "LocalModelLLM", "get_llm_
 # 阿里云 DashScope 的 OpenAI 兼容 endpoint，用于通义千问 / Qwen 系列（含 Qwen3）
 DASHSCOPE_OPENAI_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 # 硅基流动 SiliconFlow 的 OpenAI 兼容 endpoint
-SILICONFLOW_OPENAI_BASE = "https://api.siliconflow.com/v1"
+SILICONFLOW_OPENAI_BASE = "https://api.siliconflow.cn/v1"
+# ModelScope 的 OpenAI 兼容 endpoint
+MODELSCOPE_OPENAI_BASE = "https://api-inference.modelscope.cn/v1"
 
 
 def get_llm_client(llm_config: LLMConfig) -> LLMClient:
@@ -26,6 +28,7 @@ def get_llm_client(llm_config: LLMConfig) -> LLMClient:
     - provider "mock" -> MockLLM，虚拟数据，仅用于测试，无需额外依赖。
     - provider "qwen" -> OpenAICompatLLM，默认走 DashScope；api_key 可用 DASHSCOPE_API_KEY。
     - provider "siliconflow" -> 硅基流动，默认 base 为 api.siliconflow.com，api_key 用 SILICONFLOW_API_KEY。
+    - provider "modelscope" -> ModelScope 推理 API，默认 base 为 api-inference.modelscope.cn，api_key 用 MODELSCOPE_API_KEY。
     - provider "local_model" -> 本地 LoRA 进程内加载，adapter_path / SENTINEL_ADAPTER_PATH 必填。
     """
     if llm_config.provider == "mock":
@@ -55,6 +58,16 @@ def get_llm_client(llm_config: LLMConfig) -> LLMClient:
             api_key=api_key,
             api_base=api_base,
         )
+    if llm_config.provider == "modelscope":
+        api_key = llm_config.api_key or os.environ.get("MODELSCOPE_API_KEY") or None
+        api_base = llm_config.api_base or os.environ.get("MODELSCOPE_API_BASE") or MODELSCOPE_OPENAI_BASE
+        return OpenAICompatLLM(
+            model=llm_config.model or "qwen/Qwen2.5-7B-Instruct",
+            temperature=llm_config.temperature,
+            max_tokens=llm_config.max_tokens,
+            api_key=api_key,
+            api_base=api_base,
+        )
     if llm_config.provider == "local_model":
         adapter = llm_config.adapter_path or os.environ.get("SENTINEL_ADAPTER_PATH", "")
         base = llm_config.base_model_path or os.environ.get("SENTINEL_BASE_MODEL_PATH") or None
@@ -70,5 +83,5 @@ def get_llm_client(llm_config: LLMConfig) -> LLMClient:
 
     raise ValueError(
         f"不支持的 provider: {llm_config.provider!r}。"
-        " 仅支持: mock, qwen, siliconflow, local_model"
+        " 仅支持: mock, qwen, siliconflow, modelscope, local_model"
     )

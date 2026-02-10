@@ -71,6 +71,19 @@ class LocalModelLLM(LLMClient):
             msgs = []
         for m in messages:
             msgs.append({"role": m.role, "content": m.content})
+
+        # Log prompt (optional, for debugging)
+        import os
+        if os.environ.get("SENTINEL_DEBUG_LLM") == "1":
+            print("\n" + "="*80)
+            print("🤖 LLM PROMPT")
+            print("="*80)
+            if system_prompt:
+                print(f"System: {system_prompt[:200]}...")
+            for msg in messages:
+                print(f"{msg.role}: {msg.content[:500]}...")
+            print("="*80 + "\n")
+
         text = self._tokenizer.apply_chat_template(
             msgs,
             tokenize=False,
@@ -89,7 +102,16 @@ class LocalModelLLM(LLMClient):
         gen = out[:, inputs["input_ids"].shape[1] :][0]
         content = self._tokenizer.decode(gen, skip_special_tokens=True).strip()
         tokens_used = out.shape[1] - inputs["input_ids"].shape[1]
-        
+
+        # Log response (optional, for debugging)
+        if os.environ.get("SENTINEL_DEBUG_LLM") == "1":
+            print("\n" + "="*80)
+            print("🤖 LLM RESPONSE")
+            print("="*80)
+            print(content)
+            print(f"\nTokens used: {tokens_used}")
+            print("="*80 + "\n")
+
         return LLMResponse(
             content=content,
             tokens_used=int(tokens_used),

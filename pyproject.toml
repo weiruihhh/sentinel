@@ -15,6 +15,7 @@ dependencies = [
     "transformers",
     "peft",
     "accelerate",
+    "openai>=2.16.0",
 ]
 
 [project.optional-dependencies]

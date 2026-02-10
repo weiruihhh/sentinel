@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 class LLMConfig(BaseModel):
     """LLM client configuration."""
 
-    provider: Literal["mock", "openai", "qwen", "claude", "siliconflow", "local_model"] = Field(
+    provider: Literal["mock", "openai", "qwen", "claude", "siliconflow", "modelscope", "local_model"] = Field(
         default="mock", description="LLM provider"
     )
     model: str = Field(default="gpt-4", description="Model name")
@@ -139,14 +139,18 @@ def get_config() -> SentinelConfig:
     """
     cfg = DEFAULT_CONFIG.model_copy(deep=True)
     p = os.environ.get("SENTINEL_LLM_PROVIDER", "").strip().lower()
-    if p in ("mock", "openai", "qwen", "claude", "siliconflow", "local_model"):
+    if p in ("mock", "openai", "qwen", "claude", "siliconflow", "modelscope", "local_model"):
         cfg.llm.provider = p  # type: ignore[assignment]
     if os.environ.get("SENTINEL_LLM_MODEL"):
         cfg.llm.model = os.environ.get("SENTINEL_LLM_MODEL", "")
-    if os.environ.get("OPENAI_API_KEY") is not None:
-        cfg.llm.api_key = os.environ.get("OPENAI_API_KEY", "")
-    if os.environ.get("OPENAI_API_BASE") is not None:
-        cfg.llm.api_base = os.environ.get("OPENAI_API_BASE", "")
+    # 仅在使用 OpenAI 兼容的云厂商时才从 OPENAI_API_* 读取配置；
+    # 避免在 provider=siliconflow/modelscope/local_model 时误用 OPENAI_API_KEY，
+    # 覆盖各自专用的环境变量（例如 SILICONFLOW_API_KEY）。
+    if cfg.llm.provider in ("openai", "qwen", "claude"):
+        if os.environ.get("OPENAI_API_KEY") is not None:
+            cfg.llm.api_key = os.environ.get("OPENAI_API_KEY", "")
+        if os.environ.get("OPENAI_API_BASE") is not None:
+            cfg.llm.api_base = os.environ.get("OPENAI_API_BASE", "")
     if os.environ.get("SENTINEL_ADAPTER_PATH"):
         cfg.llm.adapter_path = os.environ.get("SENTINEL_ADAPTER_PATH", "")
     if os.environ.get("SENTINEL_BASE_MODEL_PATH"):
